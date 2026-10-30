@@ -1,0 +1,93 @@
+## Comparison: `r comparison_name`
+```{r include=FALSE, echo=FALSE, results='hide'}
+# FIX: Ensure we're in the correct working directory
+if (exists("main_wd") && !is.null(main_wd)) {
+  setwd(main_wd)
+}
+
+# Prepare comparison data and plots
+comp_results <- prepare_comparison_results(
+  comparison_data = annotated_results[[comparison_name]],
+  comparison_name = comparison_name,
+  pvalue_cutoff = pvalue_cutoff,
+  log2fc_cutoff = log2fc_cutoff,
+  highlight_genes = highlight_genes
+)
+```
+
+### Summary Statistics
+
+| Metric | Count |
+|--------|-------|
+| Total Proteins | `r comp_results$n_total` |
+| Significantly Regulated | `r comp_results$n_sig` (`r round(comp_results$n_sig/comp_results$n_total*100, 1)`%) |
+| Upregulated | `r comp_results$n_up` |
+| Downregulated | `r comp_results$n_down` |
+
+**Key findings:**
+
+- **`r comp_results$n_up`** proteins significantly **upregulated** (adj.p < `r comp_results$pvalue_cutoff`, log2FC > `r comp_results$log2fc_cutoff`)
+- **`r comp_results$n_down`** proteins significantly **downregulated** (adj.p < `r comp_results$pvalue_cutoff`, log2FC < -`r comp_results$log2fc_cutoff`)
+
+
+### Volcano Plot
+
+The volcano plot shows the relationship between statistical significance and fold change for each protein.
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=6}
+comp_results$volcano_plot
+```
+
+**Interpretation**: Points represent individual proteins. Red = upregulated (in `r conditions[1]`), Blue = downregulated (in `r conditions[1]`), Gray = not significant. Dashed lines indicate significance cutoffs (vertical: fold change, horizontal: adjusted p-value).
+
+### MA Plot
+
+The MA plot displays the relationship between mean expression level and fold change, helping identify expression-dependent biases.
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=6}
+comp_results$ma_plot
+```
+
+**Interpretation**: The x-axis shows average expression level, while the y-axis shows fold change. This plot helps identify whether differential expression is biased toward highly or lowly expressed proteins. Points should be distributed symmetrically around y=0 for unbiased results.
+
+### Results Table
+
+All quantified proteins with differential expression statistics. The **Significance** column marks proteins above thresholds (adj.p < `r comp_results$pvalue_cutoff`, |log2FC| > `r comp_results$log2fc_cutoff`). The **Highlighted** column is `Yes` for proteins from your list of genes of interest - choose `Yes` in its column filter to show only them. Use column filters to subset the table and update the plots above, or select points in the plots to highlight the corresponding rows.
+
+```{r echo=FALSE}
+DT::datatable(
+  comp_results$shared_data,
+  rownames = FALSE,
+  filter = "top",
+  extensions = "Buttons",
+  caption = paste("Differential Expression Results:", comparison_name),
+  options = list(
+    pageLength = 15,
+    scrollX = TRUE,
+    dom = "tlprfiB",
+    buttons = c("copy", "csv", "excel"),
+    columnDefs = list(
+      list(visible = FALSE, targets = comp_results$hide_indices)
+    ),
+    rowCallback = JS(rowCallback)
+  )
+) %>%
+  formatSignif(
+    columns = intersect(
+      c("log2FC", "SE", "pvalue", "adj.pvalue"),
+      names(comp_results$shared_data$origData())
+    ),
+    digits = 3
+  ) %>%
+  formatStyle(
+    "Significance",
+    backgroundColor = styleEqual(c("Up", "Down", "NS"), c("#ffd7d7", "#d7e8ff", "#ffffff")),
+    color           = styleEqual(c("Up", "Down", "NS"), c("#8b0000", "#00008b", "#555555")),
+    fontWeight      = styleEqual(c("Up", "Down", "NS"), c("bold", "bold", "normal"))
+  ) %>%
+  formatStyle(
+    "Highlighted",
+    backgroundColor = styleEqual(c("Yes", "No"), c("#fff3b0", "#ffffff")),
+    fontWeight      = styleEqual(c("Yes", "No"), c("bold", "normal"))
+  )
+```
+
+---

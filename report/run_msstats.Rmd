@@ -1,0 +1,361 @@
+---
+title: "`r params$report_title`"
+author: 
+  - name: "`r params$report_author`"
+    avatar: "`r params$logo_path`"
+    title: Bioinformatics Facility
+date: "`r Sys.Date()`"
+output: 
+  readthedown::readthedown:
+    highlight: kate
+    toc_depth: 2
+    number_sections: true
+    self_contained: false 
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+params:
+  input_file: "msstats.csv"
+  comparisons_file: "comparisons.csv"
+  highlight_genes_file: "genes_to_highlight.txt"
+  fasta_file: "proteome.fasta"
+  protein_map_file: "protein_map.csv"
+  fasta_source : "uniprot"
+  scripts_dir: "scripts"
+  log_dir: "."
+  imputation_method: "AFT"
+  pvalue_cutoff: 0.05
+  log2fc_cutoff: 1
+  report_title: "Proteomics Analysis Report"
+  report_author: "Author Name"
+  logo_path: "logo.png"
+---
+
+```{css  echo=FALSE, message=FALSE}
+.columns {display: flex;}
+h1 {color: #1d2355;}
+h2 {color: #1d2355;}
+h3 {color: #1d2355;}
+h4 {color: #1d2355;}
+
+h1 .header-section-number::after {
+  content: ".";
+}
+
+.navbar-inverse {
+  background-color: #1d2355;
+}
+.navbar-inverse .navbar-brand {
+  color: #F5EEFF;
+}
+.navbar-inverse .navbar-nav>li>a {
+  color: #F5EEFF;
+}
+.navbar-inverse .navbar-nav>.active>a {
+  background-color: #1d2355;
+}
+.list-group-item.active {
+  background-color: #1d2355;
+  border-color: #1d2355;
+}
+item.active, .list-group-item.active:hover {
+  background-color: #1d2355;
+  border-color: #1d2355;
+}
+#content{
+    max-width:1150px;
+}
+#sidebar {
+  background: #2a337b;
+}
+#sidebar > h2 {
+  background-color: #191970;
+}
+
+#postamble{
+    background:#1d2355;
+    border-top:solid 10px #1d2355;
+}
+.avatar {
+  width: 300px;
+  height: auto;
+  background-color: #1d2355;
+}
+
+
+.nav-pills > li.active > a, 
+.nav-pills > li.active > a:focus, 
+.nav-pills > li.active > a:hover {
+    background-color: #2a337b !important;  /* Active tab color */
+    border-color: #191970 !important;
+}
+
+.nav-pills > li > a {
+    background-color: #191970 !important;  /* Inactive tab color */
+    color: #dee2e6 !important;             /* Inactive text color */
+    border: 1px solid #dee2e6 !important;
+}
+
+.nav-pills > li > a:hover {
+    background-color: #2a337b !important;  /* Hover color */
+    color: #F5EEFF !important;
+}
+
+```
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.align = 'center'
+)
+
+knitr::opts_knit$set(output.dir = getwd())
+
+rowCallback <- c(
+    "function(row, data){",
+    "  for(var i=0; i<data.length; i++){",
+    "    if(data[i] === null){",
+    "      $('td:eq('+i+')', row).html('NA')",
+    "        .css({'color': 'rgb(151,151,151)', 'font-style': 'italic'});",
+    "    }",
+    "  }",
+    "}"
+  )
+
+library(MSstatsAlt)
+library(DT)
+
+# Suppress ALL MSstats/futile.logger messages
+futile.logger::flog.threshold(futile.logger::FATAL, name = "MSstats")
+futile.logger::flog.threshold(futile.logger::FATAL) 
+
+# ------------------------------------------------------------------
+# Make params available to sourced scripts as plain variables
+# ------------------------------------------------------------------
+input_file          <- params$input_file
+comparisons_file    <- params$comparisons_file
+highlight_genes_file <- params$highlight_genes_file
+fasta_file          <- params$fasta_file
+protein_map_file    <- params$protein_map_file
+scripts_dir         <- params$scripts_dir
+log_dir             <- params$log_dir
+imputation_method   <- params$imputation_method
+pvalue_cutoff       <- params$pvalue_cutoff
+log2fc_cutoff       <- params$log2fc_cutoff
+fasta_source        <- params$fasta_source
+
+```
+
+# Introduction
+
+This report presents the results of **Label-Free Quantification (LFQ)** analysis of LC-MS/MS proteomics data. The analysis pipeline utilizes **MSstats**, a robust statistical framework for quantitative proteomics, to identify differentially expressed proteins between experimental conditions.
+
+**Pipeline Overview**
+
+- **Peptide Search** - Library-free DIA-NN search with an in silico predicted spectral library
+- **Data Import** - Conversion of the DIA-NN report (report.parquet) to MSstats format
+- **Preprocessing** - Log transformation, normalization, and protein summarization
+- **Quality Control** - Distribution analysis and PCA visualization
+- **Differential Expression** - Statistical testing with multiple testing correction
+- **Annotation** - UniProt accession, protein name and gene symbol of identified proteins (DIA-NN entry names matched to the FASTA)
+
+
+```{r load-data, echo=FALSE, results='hide'}
+source(file.path(scripts_dir, "01_load_data.R"))
+```
+
+# Preprocessing
+
+**Processing steps**
+
+- **Log Transformation (log2)** - Variance stabilization and normality
+- **Normalization (equalizeMedians)** - Correction of systematic run-to-run variation
+- **Feature Selection (topN)** - Selection of most abundant peptides per protein
+- **Summarization (TMP)** - Tukey Median Polish for robust protein abundance estimation
+- **Missing Values (`r imputation_method` model)** - Model-based imputation for censored data
+
+
+---
+
+# Quality Control
+
+Quality control assessment evaluates data quality and identifies potential issues before differential expression analysis.
+
+## Before normalisation
+
+```{r qc-plots-no-normalisation, echo=FALSE, results='hide'}
+source(file.path(scripts_dir, "02a_preprocessing_no_norm.R"))
+source(file.path(scripts_dir, "03_quality_control.R"))
+
+```
+
+### Intensity Distribution
+
+Box plots display the distribution of log2-transformed peptide intensities for each sample, enabling assessment of overall signal intensity, distribution spread and outlier detection.
+
+
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=7}
+print(dist_plot)
+```
+
+**How to Interpret**
+
+- **Good quality** - Similar median levels across samples, consistent box widths
+- **Warning signs** - Shifted medians, compressed or expanded distributions, many outliers
+- **Poor quality** - Dramatically different distributions between replicates of the same condition
+
+
+### Principal Component Analysis (PCA)
+
+Principal Component Analysis reduces high-dimensional proteomics data to visualize sample relationships. PC1 and PC2 are the first two principal components capturing maximum variance. Biological replicates should cluster together, while unexpected clustering may indicate batch effects.
+
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=6}
+print(pca_plot)
+
+```
+
+**How to Interpret**
+
+- **Expected pattern** - Clear separation between experimental conditions along PC1 or PC2
+- **Good reproducibility** - Tight clustering of biological replicates
+- **Batch effect** - Samples cluster by processing batch rather than biological condition
+- **Outlier** - Single sample far from its expected group (consider removal)
+
+---
+
+## After normalisation
+
+```{r preprocessing, echo=FALSE, results='hide'}
+source(file.path(scripts_dir, "02_preprocessing.R"))
+
+```
+
+```{r qc-plots, echo=FALSE, out.width="75%", fig.align='center', fig.height=7}
+source(file.path(scripts_dir, "03_quality_control.R"))
+
+```
+
+### Intensity Distribution
+
+Box plots display the distribution of log2-transformed peptide intensities for each sample, enabling assessment of overall signal intensity, distribution spread, normalization effectiveness, and outlier detection.
+
+
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=7}
+print(dist_plot)
+```
+
+**How to Interpret**
+
+- **Good quality** - Similar median levels across samples, consistent box widths
+- **Warning signs** - Shifted medians, compressed or expanded distributions, many outliers
+- **Poor quality** - Dramatically different distributions between replicates of the same condition
+
+
+### Principal Component Analysis (PCA)
+
+Principal Component Analysis reduces high-dimensional proteomics data to visualize sample relationships. PC1 and PC2 are the first two principal components capturing maximum variance. Biological replicates should cluster together, while unexpected clustering may indicate batch effects.
+
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=6}
+print(pca_plot)
+
+```
+
+---
+
+# Differential Expression: One-to-One comparisons
+
+Differential expression analysis was performed to identify proteins with statistically significant abundance changes. 
+
+**Statistical framework**
+
+- **Model** - Linear mixed-effects model accounting for biological and technical variation
+- **Fold Change** - Log2 ratio of mean abundances between conditions
+- **P-value** - Probability of observing the difference by chance
+- **Adjusted P-value** - Benjamini-Hochberg FDR correction for multiple testing
+- **Significance Thresholds** - adj.p-value < `r pvalue_cutoff`, |log2FC| > `r log2fc_cutoff`
+
+
+```{r differential, echo=FALSE, results='hide'}
+
+# Proteins of interest -> "Highlighted" column (read before annotation runs)
+if (file.exists(highlight_genes_file)) {
+      highlight_genes <- readLines(highlight_genes_file, warn = FALSE)
+      highlight_genes <- trimws(highlight_genes)
+      highlight_genes <- highlight_genes[highlight_genes != ""]
+} else {
+      highlight_genes <- c()
+}
+
+if (imputation_method == "AFT") {
+    source(file.path(scripts_dir, "04_differential.R"))
+}    
+ 
+
+# Get all comparison names
+comparisons_df <- read.csv(comparisons_file, stringsAsFactors = FALSE, sep = ",")
+comparison_names <- paste0(comparisons_df[[1]], "_vs_", comparisons_df[[2]])
+
+
+
+# Store the working directory for child documents
+main_wd <- getwd()
+
+```
+
+```{r render-all-comparisons, results='asis'}
+# FIX: Ensure knitr evaluates the child documents in the Nextflow work
+# directory (main_wd) and NOT in the directory that holds the child .Rmd
+# (scripts_dir). Otherwise every relative output written by a child
+# (MSstats *.log files, comparison_results_*.xlsx) lands in report/scripts/.
+knitr::opts_knit$set(output.dir = main_wd)
+knitr::opts_knit$set(root.dir = main_wd)
+
+# Render analysis for each comparison using child template.
+# For the ludovic path, each child appends its annotated result to
+# `all_annotated_results` (built in 05_helpers_ludovic.R).
+out <- NULL
+for (comparison_name in comparison_names) {
+  out <- c(out, knitr::knit_child(
+    file.path(scripts_dir, ifelse(imputation_method == "AFT",
+                                  "comparison_template.Rmd",
+                                  "comparison_template_ludovic.Rmd")),
+    envir = environment(),
+    quiet = TRUE
+  ))
+}
+cat(out, sep = '\n')
+
+```
+
+## Results Files
+
+```{r echo=FALSE, results='asis'}
+if (imputation_method == "ludovic" &&
+    exists("all_annotated_results") &&
+    length(all_annotated_results) > 0) {
+  cat("All comparison results have been exported:\n\n")
+  cat("- **`comparison_results.xlsx`** - one sheet per comparison\n")
+  cat("- **`results/<comparison>.csv`** - one CSV per comparison\n\n")
+  cat("Comparisons exported: ",
+      paste0("`", names(all_annotated_results), "`", collapse = ", "),
+      "\n")
+}
+```
+
+## Recommended Citations
+
+If using this analysis pipeline, please cite:
+
+**MSstats** - Choi M, et al. (2014). MSstats: an R package for statistical analysis of quantitative mass spectrometry-based proteomic experiments. Bioinformatics, 30(17), 2524-2526.
+
+**DIA-NN** - Demichev V, et al. (2020). DIA-NN: neural networks and interference correction enable deep proteome coverage in high throughput. Nature Methods, 17, 41-44.
+
+
+# Session Info
+```{r session-info}
+sessionInfo()
+```

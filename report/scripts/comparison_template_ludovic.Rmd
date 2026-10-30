@@ -1,0 +1,206 @@
+## Comparison: `r comparison_name`
+
+
+```{r echo=FALSE, results='hide'}
+# Guard: knit_child() evaluates this file from scripts_dir; force the working
+# directory back to the report work dir so nothing is written into report/scripts/.
+if (exists("main_wd") && !is.null(main_wd)) setwd(main_wd)
+
+conditions <- strsplit(comparison_name, "_vs_")[[1]]
+msstats_df <- read.csv(input_file) %>% dplyr::filter(Condition %in% conditions)
+
+msstats_format <- FragPipetoMSstatsFormat(
+  input = msstats_df,
+  useUniquePeptide = TRUE,
+  removeFewMeasurements = TRUE,
+  removeProtein_with1Feature = FALSE,
+  summaryforMultipleRows = max,
+  use_log_file = TRUE,
+  append = FALSE,
+  verbose = TRUE,
+  log_file_path = file.path(log_dir, paste0("MSstats_import_", comparison_name, ".log"))
+)
+
+summarized = dataProcess(
+  msstats_format,
+  logTrans = 2,
+  normalization = "equalizeMedians",
+  featureSubset = "topN",
+  summaryMethod = "TMP",
+  equalFeatureVar = TRUE,
+  censoredInt = "NA",
+  imputation_method = "ludovic",
+  MBimpute = TRUE,
+  numberOfCores = 4,
+  use_log_file = TRUE,
+  append = FALSE,
+  log_file_path = file.path(log_dir, paste0("MSstats_preprocessing_", comparison_name, ".log"))
+)
+```
+
+### PCA analysis (post-imputation)
+
+```{r}
+# From MSstats processed data
+feature_data <- summarized$FeatureLevelData
+
+# Distribution plot
+dist_plot <- ggplot(feature_data, aes(x = SUBJECT, y = ABUNDANCE, fill = GROUP)) +
+  geom_boxplot(outlier.size = 0.5, outlier.alpha = 0.3) +
+  theme_bw(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  ) +
+  labs(
+    x = "Sample",
+    y = "Log2 Intensity",
+    fill = "Condition",
+    title = "Intensity Distribution per Sample (Post-Normalization)"
+  )
+
+# Protein matrix
+protein_matrix <- summarized$ProteinLevelData %>%
+  dplyr::select(Protein, SUBJECT, LogIntensities) %>%
+  pivot_wider(names_from = SUBJECT, values_from = LogIntensities) %>%
+  column_to_rownames("Protein")
+
+message(sprintf("Total proteins: %d", nrow(protein_matrix)))
+
+# Check missingness distribution
+missing_pct <- rowMeans(is.na(protein_matrix))
+
+# Filter proteins with >30% missing
+protein_filtered <- protein_matrix[missing_pct < 0.3, ]
+message(sprintf("After filtering: %d proteins", nrow(protein_filtered)))
+
+# Impute remaining NA with row minimum
+protein_final <- t(apply(protein_filtered, 1, function(x) {
+  x[is.na(x)] <- min(x, na.rm = TRUE)
+  x
+}))
+
+# Metadata
+metadata <- summarized$ProteinLevelData %>%
+  dplyr::select(SUBJECT, GROUP, SUBJECT) %>%
+  dplyr::distinct() %>%
+  dplyr::rename(Condition = GROUP, BioReplicate = SUBJECT) %>%
+  as.data.frame()
+
+rownames(metadata) <- metadata$BioReplicate
+metadata <- metadata[colnames(protein_final), ]
+
+# PCA
+pca_result <- pca(
+  mat = protein_final,
+  metadata = metadata,
+  removeVar = 0.1
+)
+
+pca_plot <- biplot(pca_result, colby = "Condition", legendPosition = "right",
+                   title = "PCA - Protein Level")
+pca_plot
+```
+
+```{r include=FALSE, echo=FALSE, results='hide'}
+source(file.path(scripts_dir, "05_differential_ludovic.R"))
+
+# Ensure we're in the correct working directory (kept from original template)
+if (exists("main_wd") && !is.null(main_wd)) {
+  setwd(main_wd)
+}
+
+# Prepare per-comparison plots and summary stats
+comp_results <- prepare_comparison_results(
+  comparison_data = annotated_results[[comparison_name]],
+  comparison_name = comparison_name,
+  pvalue_cutoff   = pvalue_cutoff,
+  log2fc_cutoff       = log2fc_cutoff,
+  highlight_genes = highlight_genes
+)
+```
+
+### Summary Statistics
+
+| Metric | Count |
+|--------|-------|
+| Total Proteins | `r comp_results$n_total` |
+| Significantly Regulated | `r comp_results$n_sig` (`r round(comp_results$n_sig/comp_results$n_total*100, 1)`%) |
+| Upregulated (in `r conditions[1]`) | `r comp_results$n_up` |
+| Downregulated (in `r conditions[1]`) | `r comp_results$n_down` |
+
+**Key findings:**
+
+- **`r comp_results$n_up`** proteins significantly **upregulated** (adj.p < `r comp_results$pvalue_cutoff`, log2FC > `r comp_results$log2fc_cutoff`)
+- **`r comp_results$n_down`** proteins significantly **downregulated** (adj.p < `r comp_results$pvalue_cutoff`, log2FC < -`r comp_results$log2fc_cutoff`)
+
+
+### Volcano Plot
+
+The volcano plot shows the relationship between statistical significance and fold change for each protein.
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=6}
+comp_results$volcano_plot
+```
+
+**Interpretation**: Points represent individual proteins. Red = upregulated (in `r conditions[1]`), Blue = downregulated (in `r conditions[1]`), Gray = not significant. Dashed lines indicate significance cutoffs (vertical: fold change, horizontal: adjusted p-value).
+
+### MA Plot
+
+The MA plot displays the relationship between mean expression level and fold change, helping identify expression-dependent biases.
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=6}
+comp_results$ma_plot
+```
+
+**Interpretation**: The x-axis shows average expression level, while the y-axis shows fold change. This plot helps identify whether differential expression is biased toward highly or lowly expressed proteins. Points should be distributed symmetrically around y=0 for unbiased results.
+
+### Results Table
+
+All quantified proteins with differential expression statistics. The **Significance** column marks proteins above thresholds (adj.p < `r comp_results$pvalue_cutoff`, |log2FC| > `r comp_results$log2fc_cutoff`). The **Highlighted** column is `Yes` for proteins from your list of genes of interest - choose `Yes` in its column filter to show only them. Use column filters to subset the table and update the plots above, or select points in the plots to highlight the corresponding rows.
+
+```{r echo=FALSE}
+DT::datatable(
+  comp_results$shared_data,
+  rownames = FALSE,
+  filter = "top",
+  extensions = "Buttons",
+  caption = paste("Differential Expression Results:", comparison_name),
+  options = list(
+    pageLength = 15,
+    scrollX = TRUE,
+    dom = "tlprfiB",
+    buttons = c("copy", "csv", "excel"),
+    columnDefs = list(
+      list(visible = FALSE, targets = comp_results$hide_indices)
+    ),
+    rowCallback = JS(rowCallback)
+  )
+) %>%
+  formatSignif(
+    columns = intersect(
+      c("log2FC", "SE", "pvalue", "adj.pvalue"),
+      names(comp_results$shared_data$origData())
+    ),
+    digits = 3
+  ) %>%
+  formatStyle(
+    "Significance",
+    backgroundColor = styleEqual(c("Up", "Down", "NS"), c("#ffd7d7", "#d7e8ff", "#ffffff")),
+    color           = styleEqual(c("Up", "Down", "NS"), c("#8b0000", "#00008b", "#555555")),
+    fontWeight      = styleEqual(c("Up", "Down", "NS"), c("bold", "bold", "normal"))
+  ) %>%
+  formatStyle(
+    "Highlighted",
+    backgroundColor = styleEqual(c("Yes", "No"), c("#fff3b0", "#ffffff")),
+    fontWeight      = styleEqual(c("Yes", "No"), c("bold", "normal"))
+  )
+```
+
+
+```{r echo=FALSE, out.width="75%", fig.align='center', fig.height=6}
+# Export to excel file
+library(openxlsx)
+write.xlsx(comp_results$data, paste("comparison_results_", comparison_name, ".xlsx"))
+```
+
+---
