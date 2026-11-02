@@ -1,0 +1,30 @@
+Bootstrap: docker
+From: mambaorg/micromamba:1.5.10
+
+# Minimal ThermoRawFileParser image for the RAW_TO_MZML process.
+#
+# Build:  apptainer build thermorawfileparser_1.4.5.sif thermorawfileparser.def
+
+%post
+    set -e
+
+    # Pin explicitly — check https://anaconda.org/bioconda/thermorawfileparser
+    # for the current version list before bumping this.
+    TRFP_VERSION=1.4.5
+
+    # micromamba ships in the base image; make sure its root prefix is set
+    # so that `-n base` resolves to /opt/conda during the build.
+    export MAMBA_ROOT_PREFIX=/opt/conda
+
+    micromamba install -y -n base -c conda-forge -c bioconda \
+        thermorawfileparser=${TRFP_VERSION}
+    micromamba clean --all --yes
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+
+%runscript
+    exec "$@"
+
+%labels
+    Description ThermoRawFileParser 1.4.5 (RAW_TO_MZML)

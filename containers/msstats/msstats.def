@@ -1,0 +1,42 @@
+Bootstrap: docker
+From: rocker/r-ver:4.6.0
+
+# Local package archive is copied in via %files (see note below).
+# In Apptainer, %files are copied into the container BEFORE %post runs,
+# so the tarball is available to the install step.
+%files
+    MSstatsAlt_4.17.6.tar.gz /tmp/MSstatsAlt_4.17.6.tar.gz
+
+%post
+    set -e
+
+    # --- System libraries that many CRAN/Bioc packages need to compile ---
+    # Add/remove based on your actual packages.
+    apt-get update && apt-get install -y --no-install-recommends \
+        libxml2-dev \
+        libcurl4-openssl-dev \
+        libssl-dev \
+        libfontconfig1-dev
+    rm -rf /var/lib/apt/lists/*
+
+    # --- CRAN packages ---
+    # Rocker images use a pinned RSPM/Posit snapshot, so versions are reproducible.
+    R -q -e 'install.packages(c("dplyr", "tidyverse", "ggplot2", "ggrepel", "DT", "openxlsx", "rmarkdown"))'
+
+    # --- Bioconductor packages ---
+    R -q -e 'install.packages("BiocManager")'
+    R -q -e 'BiocManager::install(c("PCAtools", "Biostrings"), update = FALSE, ask = FALSE)'
+
+    # --- Local package from the copied archive ---
+    R -q -e 'install.packages("remotes")'
+    R -q -e 'remotes::install_local("/tmp/MSstatsAlt_4.17.6.tar.gz", dependencies = TRUE); if (!requireNamespace("MSstatsAlt", quietly = TRUE)) stop("install failed")'
+
+%environment
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
+%runscript
+    exec R "$@"
+
+%labels
+    Description R 4.6.0 with CRAN, Bioconductor, and MSstatsAlt

@@ -1,0 +1,89 @@
+Bootstrap: docker
+From: debian:bookworm-slim
+
+# =============================================================================
+#  DIA-NN 2.x (Academia, Linux build) for the DIANN Nextflow process
+#
+#  Build (version / URL can be overridden at build time):
+#    apptainer build diann_2.sif diann_2.def
+#    apptainer build \
+#        --build-arg DIANN_VERSION=2.3.2 \
+#        --build-arg DIANN_URL=https://github.com/vdemichev/DiaNN/releases/download/2.0/DIA-NN-2.3.2-Academia-Linux.zip \
+#        diann_2.sif diann_2.def
+#
+#  Inside the image the executable is on PATH as `diann`
+#  -> set params.diann_bin = 'diann' in the pipeline.
+#
+#  NOTE: DIA-NN Academia is licensed for academic use only. Keep the .sif
+#  for internal use; do not push it to a public registry.
+# =============================================================================
+
+%arguments
+    DIANN_VERSION=2.3.2
+    DIANN_URL=https://github.com/vdemichev/DiaNN/releases/download/2.0/DIA-NN-2.3.2-Academia-Linux.zip
+    DOTNET_CHANNEL=8.0
+
+
+%help
+    DIA-NN {{ DIANN_VERSION }} command-line build.
+    Usage:  apptainer exec diann_2.sif diann --help
+
+%environment
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export DOTNET_ROOT=/usr/share/dotnet
+    export DOTNET_CLI_TELEMETRY_OPTOUT=1
+    export DOTNET_NOLOGO=1
+    export DOTNET_CLI_HOME=/tmp
+    export PATH=/opt/diann:/usr/share/dotnet:$PATH
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+
+    # ---- system libraries -------------------------------------------------
+    # glibc in bookworm (2.36) is newer than Linux Mint 21.2 (2.35), as
+    # required by the DIA-NN Linux build.
+    # procps: `ps` for Nextflow task metrics; gawk/grep: used in the DIANN
+    # script block (decoy removal from the FASTA).
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates wget curl unzip \
+        libgomp1 libstdc++6 libicu72 libssl3 zlib1g \
+        locales procps gawk grep coreutils bash
+    rm -rf /var/lib/apt/lists/*
+
+    # ---- .NET SDK 8 (DIA-NN 2.x Linux requirement, >= 8.0.407) ------------
+    wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+    bash /tmp/dotnet-install.sh --channel {{ DOTNET_CHANNEL }} --install-dir /usr/share/dotnet
+    ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet
+    rm -f /tmp/dotnet-install.sh
+
+    # ---- DIA-NN ------------------------------------------------------------
+    mkdir -p /tmp/diann_src
+    wget -q "{{ DIANN_URL }}" -O /tmp/diann.zip
+    unzip -q /tmp/diann.zip -d /tmp/diann_src
+
+    # The archive usually unpacks into a versioned folder (diann-x.y.z/);
+    # locate the Linux executable rather than hard-coding the layout.
+    DIANN_EXE=$(find /tmp/diann_src -type f -name 'diann-linux' | head -n 1)
+    if [ -z "${DIANN_EXE}" ]; then
+        echo "ERROR: diann-linux executable not found in archive" >&2
+        find /tmp/diann_src -maxdepth 3 >&2
+        exit 1
+    fi
+    mv "$(dirname "${DIANN_EXE}")" /opt/diann
+    chmod -R a+rX /opt/diann
+    chmod a+x /opt/diann/diann-linux
+    ln -sf /opt/diann/diann-linux /opt/diann/diann
+    ln -sf /opt/diann/diann-linux /usr/local/bin/diann
+    rm -rf /tmp/diann.zip /tmp/diann_src
+
+%test
+    set -e
+    export DOTNET_ROOT=/usr/share/dotnet
+    export DOTNET_CLI_HOME=/tmp
+    dotnet --list-sdks
+    command -v diann
+    # DIA-NN prints its banner/version and exits when run without input
+    diann 2>&1 | head -n 5 || true
