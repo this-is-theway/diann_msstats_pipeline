@@ -105,8 +105,8 @@ prepare_comparison_results <- function(comparison_data, comparison_name,
   )
 
   # Build the SharedData dataframe: visible display cols first, then plot-only cols
-  display_cols <- c("Gene_name", "Highlighted", "Protein", "Protein_ID", "Protein_entry", "Protein_name",
-                    "log2FC", "SE", "pvalue", "adj.pvalue", "Significance")
+  display_cols <- c("Protein", "Protein_ID", "Gene_name", 
+                    "log2FC", "pvalue", "adj.pvalue", "Highlighted", "Significance")
   plot_cols    <- c("neg_log_pvalue", "meanLog2Intensity", "hover_text")
   keep_cols    <- c(intersect(display_cols, names(comparison_data)), plot_cols)
   sd_data      <- comparison_data[, keep_cols, drop = FALSE]
