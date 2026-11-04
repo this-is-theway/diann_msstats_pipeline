@@ -45,7 +45,6 @@ workflow {
     threads              : ${params.diann_threads}
     ram (GB)             : ${params.diann_ram}
     MBR                  : ${params.diann_mbr}
-    protein column       : ${params.diann_protein_column}
     ===========================================================
     """
     .stripIndent()

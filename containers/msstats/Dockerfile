@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --- CRAN packages ---
 # Rocker images use a pinned RSPM/Posit snapshot, so versions are reproducible.
-RUN R -q -e 'install.packages(c("dplyr", "tidyverse", "ggplot2", "ggrepel", "DT", "openxlsx", "rmarkdown"))'
+RUN R -q -e 'install.packages(c("dplyr", "tidyverse", "ggplot2", "ggrepel", "DT", "openxlsx", "rmarkdown", "arrow", "data.table"))'
 
 # --- Bioconductor packages ---
 RUN R -q -e 'install.packages("BiocManager")' \

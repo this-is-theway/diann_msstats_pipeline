@@ -7,25 +7,16 @@
 if (exists("main_wd") && !is.null(main_wd)) setwd(main_wd)
 
 conditions <- strsplit(comparison_name, "_vs_")[[1]]
-msstats_df <- read.csv(input_file) %>% dplyr::filter(Condition %in% conditions)
-
-msstats_format <- FragPipetoMSstatsFormat(
-  input = msstats_df,
-  useUniquePeptide = TRUE,
-  removeFewMeasurements = TRUE,
-  removeProtein_with1Feature = FALSE,
-  summaryforMultipleRows = max,
-  use_log_file = TRUE,
-  append = FALSE,
-  verbose = TRUE,
-  log_file_path = file.path(log_dir, paste0("MSstats_import_", comparison_name, ".log"))
-)
+msstats_cmp <- msstats_format %>% dplyr::filter(Condition %in% conditions)
 
 summarized = dataProcess(
-  msstats_format,
+  msstats_cmp,
   logTrans = 2,
   normalization = "equalizeMedians",
-  featureSubset = "topN",
+  featureSubset = "all",
+  n_top_feature = 10,
+  min_feature_count = 2,
+  remove_uninformative_feature_outlier = FALSE,
   summaryMethod = "TMP",
   equalFeatureVar = TRUE,
   censoredInt = "NA",

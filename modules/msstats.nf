@@ -9,7 +9,7 @@
 process MSSTATS_REPORT {
     tag "MSstats Analysis"
     label 'process_medium'
-    publishDir "${params.outdir}/msstats",      mode: 'copy', pattern: '*.{html,xlsx}'
+    publishDir "${params.outdir}/msstats",      mode: 'copy', pattern: '*.{html,xlsx,csv.gz}'
     publishDir "${params.outdir}/msstats", mode: 'copy', pattern: '*_files/**'
     publishDir "${params.outdir}/msstats/logs",  mode: 'copy', pattern: '*.log'
 
@@ -29,6 +29,7 @@ process MSSTATS_REPORT {
     path "msstats_report.html",      emit: report
     path "*_files/**",               emit: report_files, optional: true
     path "*.xlsx",                   emit: excel, optional: true
+    path "*.csv.gz",                 emit: tables, optional: true
     path "*.log",                    emit: logs,  optional: true
 
     script:

@@ -4,6 +4,8 @@
 ========================================================================================
     Native DIA-NN library-free search (in silico predicted spectral library from FASTA)
     and conversion of report.parquet into an MSstats input CSV.
+    --export-quant adds the fragment intensities (Fr.N.Quantity) to report.parquet,
+    which MSstats uses as features (DIA-NN developers' recommended route).
 ----------------------------------------------------------------------------------------
 */
 
@@ -88,6 +90,7 @@ process DIANN {
         ${var_mod} \\
         ${mbr} \\
         --rt-profiling \\
+        --export-quant \\
         ${params.diann_extra_args}
     """
 }
@@ -96,31 +99,30 @@ process DIANN {
 
 process DIANN_TO_MSSTATS {
     tag "report.parquet -> msstats.csv"
-    label 'process_low'
+    label 'process_medium'
     publishDir "${params.outdir}/diann", mode: 'copy'
 
     input:
-    path report               // DIA-NN report.parquet
+    path report               // DIA-NN report.parquet (with --export-quant fragment columns)
     path experimental_design  // CSV: file, experiment, bioreplicate, data_type
 
     output:
-    path "msstats.csv",       emit: msstats_file
-    path "protein_map.csv",   emit: protein_map
+    path "msstats.csv",         emit: msstats_file
+    path "protein_map.csv",     emit: protein_map
+    path "MSstats_import.log",  emit: log, optional: true
 
     script:
-    def mbr         = params.diann_mbr ? "--mbr" : ""
-    def proteotypic = params.diann_proteotypic_only ? "--proteotypic-only" : ""
+    // Fragment-level conversion with MSstats' DIANNtoMSstatsFormat()
     """
-    diann_to_msstats.py \\
-        --report ${report} \\
-        --design ${experimental_design} \\
-        --out msstats.csv \\
-        --protein-map protein_map.csv \\
-        --protein-column '${params.diann_protein_column}' \\
-        --intensity-column '${params.diann_intensity_column}' \\
-        --qvalue ${params.diann_qvalue} \\
-        --pg-qvalue ${params.diann_pg_qvalue} \\
-        --global-qvalue ${params.diann_global_qvalue} \\
-        ${mbr} ${proteotypic}
+    diann_to_msstats.R \\
+        --report=${report} \\
+        --design=${experimental_design} \\
+        --out=msstats.csv \\
+        --protein-map=protein_map.csv \\
+        --mbr=${params.diann_mbr ? 'TRUE' : 'FALSE'} \\
+        --qvalue=${params.diann_qvalue} \\
+        --pg-qvalue=${params.diann_pg_qvalue} \\
+        --global-qvalue=${params.diann_global_qvalue} \\
+        --log=MSstats_import.log
     """
 }

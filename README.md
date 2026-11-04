@@ -37,8 +37,8 @@ interactive HTML report of differentially abundant proteins:
 |--------------------|----------------------------------------------------------------------|-------------------------------|
 | `RAW_TO_MZML`      | `${container_dir}/thermorawfileparser/thermorawfileparser_1.4.5.sif`  | ThermoRawFileParser           |
 | `DIANN`            | `${container_dir}/diann/diann_2.sif`                                  | DIA-NN 2.x                    |
-| `DIANN_TO_MSSTATS` | `${container_dir}/python/python_pandas_pyarrow.sif`                   | Python 3 + pandas + pyarrow   |
-| `MSSTATS_REPORT`   | `${container_dir}/msstats/msstats.sif`                                | R, MSstatsAlt, rmarkdown, readthedown, tidyverse, Biostrings, PCAtools, plotly, crosstalk, DT, openxlsx |
+| `DIANN_TO_MSSTATS` | `${container_dir}/msstats/msstats.sif`                                | R, MSstatsAlt, arrow, data.table |
+| `MSSTATS_REPORT`   | `${container_dir}/msstats/msstats.sif`                                | R, MSstatsAlt, data.table, rmarkdown, readthedown, tidyverse, Biostrings, PCAtools, plotly, crosstalk, DT, openxlsx |
 
 > Check the image names in `nextflow.config` (`process { withName: ... }`)
 > match the files in your `container_dir`, and enable Singularity
@@ -166,42 +166,38 @@ Runs **DIA-NN** in *library-free* mode on all files together:
    with DIA-NN's deep-learning predictor.
 3. Searches all runs against that library, with match-between-runs (`--reanalyse`) if `--diann_mbr true`.
 4. Writes the main precursor-level report `report.parquet`, plus protein/gene matrices
-   (`report.pg_matrix.tsv`, …) and the generated library.
+   (`report.pg_matrix.tsv`, …) and the generated library. `--export-quant` adds the
+   fragment intensities (`Fr.0.Quantity` … `Fr.11.Quantity`) to `report.parquet`; MSstats needs them.
 
 Fixed modification: carbamidomethyl C (`--unimod4`). Variable: Met oxidation (`--diann_oxidation`),
 N-terminal Met excision (`--met-excision`).
 
 ### `DIANN_TO_MSSTATS`
 Converts `report.parquet` to the MSstats input table `msstats.csv`
-(script `bin/diann_to_msstats.py`):
+(script `bin/diann_to_msstats.R`, run in the MSstats container). It follows the route
+recommended by the DIA-NN developers, since MSstats does not read the DIA-NN 2.x format directly:
 
-1. Removes decoys and filters on q-values (same logic as MSstats' `DIANNtoMSstatsFormat`):
-   - `Q.Value ≤ diann_qvalue`, `PG.Q.Value ≤ diann_pg_qvalue`
-   - with MBR: `Lib.Q.Value`, `Lib.PG.Q.Value ≤ diann_global_qvalue`;
-     without MBR: `Global.Q.Value`, `Global.PG.Q.Value ≤ diann_global_qvalue`
-2. Keeps precursors with a positive intensity (`diann_intensity_column`).
-3. Adds `Condition` and `BioReplicate` from the experimental design.
-4. Writes the 10 standard MSstats columns:
-
-   | MSstats column     | Taken from                                    |
-   |--------------------|-----------------------------------------------|
-   | `ProteinName`      | `Protein.Names` (UniProt entry name, e.g. `ALBU_HUMAN`; falls back to `Protein.Group`) |
-   | `PeptideSequence`  | `Modified.Sequence`                           |
-   | `PrecursorCharge`  | `Precursor.Charge`                            |
-   | `FragmentIon`, `ProductCharge` | `NA` (precursor-level quantification) |
-   | `IsotopeLabelType` | `L` (label-free)                              |
-   | `Condition`, `BioReplicate` | experimental design                  |
-   | `Run`              | DIA-NN `Run`                                  |
-   | `Intensity`        | `Precursor.Quantity` (default)                |
-
+1. Joins the fragment intensities `Fr.0.Quantity` … `Fr.N.Quantity` with `;` into
+   `Fragment.Quant.Corrected`, the column MSstats' DIA-NN importer expects.
+2. Builds the annotation (`Run`, `Condition`, `BioReplicate`) from the experimental design.
+3. Runs MSstats' `DIANNtoMSstatsFormat()`. This function:
+   - removes decoys and applies the q-value filters: `Q.Value ≤ diann_qvalue`; with MBR
+     `Lib.Q.Value ≤ diann_global_qvalue` and `Lib.PG.Q.Value ≤ diann_pg_qvalue`; without MBR the
+     `Global.*` equivalents
+   - keeps unique peptides only and removes features with too few measurements
+   - uses `Protein.Names` (UniProt entry name, e.g. `ALBU_HUMAN`) as `ProteinName`. Each
+     fragment of each precursor becomes one MSstats feature.
+4. Writes the result to `msstats.csv` and the MSstats log to `MSstats_import.log`.
 5. Also writes `protein_map.csv`: for each `ProteinName`, the DIA-NN protein group
    (UniProt accessions) and gene names. The report uses it as an annotation fallback.
 
 ### `MSSTATS_REPORT`
 Renders `report/run_msstats.Rmd` into `msstats_report.html`:
 
-1. **Import** – `msstats.csv` is read with MSstats (unique peptides only, features with too few measurements removed).
-2. **Preprocessing** – log2 transformation, median normalisation (`equalizeMedians`), top-N feature selection,
+1. **Import** – `msstats.csv` is read as-is (it is already filtered by `DIANNtoMSstatsFormat()`).
+2. **Preprocessing** – log2 transformation, median normalisation (`equalizeMedians`), feature selection as
+   recommended by the DIA-NN developers (`featureSubset = "all"`, `min_feature_count = 2`,
+   `remove_uninformative_feature_outlier = FALSE`),
    Tukey median polish summarisation to protein level, model-based imputation of missing values.
 3. **Quality control** – intensity box plots and PCA, before and after normalisation.
 4. **Differential abundance** – MSstats linear model for each comparison in `comparisons.csv`;
@@ -271,12 +267,9 @@ Defaults are in `nextflow.config`.
 
 | Parameter                | Default              | Description |
 |--------------------------|----------------------|-------------|
-| `diann_protein_column`   | `Protein.Names`      | DIA-NN column used as protein identifier: `Protein.Names` (entry names, e.g. `ALBU_HUMAN`) or `Protein.Group` (accessions, e.g. `P02768`). |
-| `diann_intensity_column` | `Precursor.Quantity` | Precursor intensity: `Precursor.Quantity` (raw; MSstats normalises itself) or `Precursor.Normalised` (DIA-NN normalised). |
-| `diann_pg_qvalue`        | `0.01`               | Protein-group FDR per run. |
-| `diann_global_qvalue`    | `0.01`               | Experiment-wide precursor and protein FDR (`Lib.*` with MBR, `Global.*` without). |
-| `diann_proteotypic_only` | `false`              | Keep only peptides unique to one protein. |
-| `diann_report`           | `''`                 | Existing `report.parquet`: skip the search (section 5). |
+| `diann_pg_qvalue`        | `0.01`               | Experiment-wide protein-group FDR (`Lib.PG.Q.Value` with MBR, `Global.PG.Q.Value` without). |
+| `diann_global_qvalue`    | `0.01`               | Experiment-wide precursor FDR (`Lib.Q.Value` with MBR, `Global.Q.Value` without). |
+| `diann_report`           | `''`                 | Existing `report.parquet`: skip the search (section 5). It must come from DIA-NN run with `--export-quant`. |
 
 ### Statistics and report
 
@@ -336,12 +329,14 @@ results/
 │   ├── report.pg_matrix.tsv    # DIA-NN protein-group matrix (+ other *.tsv matrices / stats)
 │   ├── report-lib.parquet      # predicted spectral library
 │   ├── target.fasta            # FASTA used for the search (decoys removed)
-│   ├── msstats.csv             # MSstats input
+│   ├── msstats.csv             # MSstats input (fragment level)
+│   ├── MSstats_import.log      # DIANNtoMSstatsFormat log
 │   └── protein_map.csv         # ProteinName → accession / gene (DIA-NN)
 ├── msstats/
 │   ├── msstats_report.html     # interactive report – open in a browser
 │   ├── msstats_report_files/   # report resources (keep next to the .html)
-│   ├── *.xlsx                  # comparison results, protein/peptide-level data
+│   ├── *.xlsx                  # comparison results, protein/feature-level data
+│   ├── pepetide_level_data.csv.gz  # feature-level data instead of .xlsx when > 1 million rows
 │   └── logs/                   # MSstats log files
 └── pipeline_info/              # Nextflow execution report, timeline, trace, DAG
 ```
@@ -366,6 +361,7 @@ Keep `msstats_report.html` and `msstats_report_files/` together when moving or s
 
 | Problem | What to check |
 |---------|---------------|
+| `no Fr.N.Quantity columns in report.parquet` | The report was made without `--export-quant`. Re-run DIA-NN (the pipeline adds it), or add `--export-quant` to your own DIA-NN run. |
 | `no rows left after matching DIA-NN runs to the experimental design` | The `file` column must match the MS file names (extension does not matter). |
 | `Condition X not found in available conditions` | Names in `comparisons.csv` must match `experiment` in the design exactly (case, spaces). |
 | Many proteins without `Gene_name` | The FASTA is not in UniProt format. The DIA-NN gene names from `protein_map.csv` are used where available. |
