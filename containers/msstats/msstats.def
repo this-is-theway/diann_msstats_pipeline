@@ -1,11 +1,9 @@
 Bootstrap: docker
 From: rocker/r-ver:4.6.0
 
-# Local package archive is copied in via %files.
-# In Apptainer, %files are copied into the container BEFORE %post runs.
-# NOTE: do NOT copy it to /tmp — during %post Apptainer mounts a separate
-# /tmp over the container's, which hides anything %files put there.
-# The source path is relative to the directory you run `apptainer build` from.
+# Local package archive is copied in via %files (see note below).
+# In Apptainer, %files are copied into the container BEFORE %post runs,
+# so the tarball is available to the install step.
 %files
     MSstatsAlt_4.17.6.tar.gz /opt/MSstatsAlt_4.17.6.tar.gz
 
@@ -18,21 +16,25 @@ From: rocker/r-ver:4.6.0
         libxml2-dev \
         libcurl4-openssl-dev \
         libssl-dev \
-        libfontconfig1-dev
+        git \
+        libgit2-dev \
+        libfontconfig1-dev \
+	libuv1-dev \
+	pandoc
+
     rm -rf /var/lib/apt/lists/*
 
     # --- CRAN packages ---
     # Rocker images use a pinned RSPM/Posit snapshot, so versions are reproducible.
-    R -q -e 'install.packages(c("dplyr", "tidyverse", "ggplot2", "ggrepel", "DT", "openxlsx", "rmarkdown", "arrow", "data.table"))'
+    R -q -e 'install.packages(c("dplyr", "tidyverse", "ggplot2", "ggrepel", "plotly", "crosstalk", "DT", "openxlsx", "rmarkdown", "remotes", "pak", "arrow", "data.table"))'
+    R -q -e 'pak::pak("6chaoran/readthedown")'
 
     # --- Bioconductor packages ---
     R -q -e 'install.packages("BiocManager")'
     R -q -e 'BiocManager::install(c("PCAtools", "Biostrings"), update = FALSE, ask = FALSE)'
 
     # --- Local package from the copied archive ---
-    R -q -e 'install.packages("remotes")'
     R -q -e 'remotes::install_local("/opt/MSstatsAlt_4.17.6.tar.gz", dependencies = TRUE); if (!requireNamespace("MSstatsAlt", quietly = TRUE)) stop("install failed")'
-    rm -f /opt/MSstatsAlt_4.17.6.tar.gz
 
 %environment
     export LC_ALL=C.UTF-8
@@ -42,4 +44,4 @@ From: rocker/r-ver:4.6.0
     exec R "$@"
 
 %labels
-    Description R 4.6.0 with CRAN, Bioconductor, MSstatsAlt and arrow (DIA-NN report.parquet)
+    Description R 4.6.0 with CRAN, Bioconductor, and MSstatsAlt
